@@ -1,0 +1,16 @@
+{
+  "name": "eva_programming_language",
+  "version": "1.0.0",
+  "description": "",
+  "main": "Environment.js",
+  "scripts": {
+    "test": "node __tests__/run.js",
+    "generate-parser": "npx syntax-cli --grammar parser/eva-grammar.bnf --mode LALR1 --output parser/evaParser.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "syntax-cli": "^0.1.27"
+  }
+}
