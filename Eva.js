@@ -2,6 +2,9 @@ const assert = require("assert");
 
 const Environment = require("./Environment");
 const Transformer = require("./transform/Transformer");
+const evaParser = require('./parser/evaParser');
+
+const fs = require('fs');
 
 /**
  * Eva Interpreter
@@ -15,16 +18,31 @@ class Eva {
     this._transformer = new Transformer();
   }
 
+  evalGlobal(expression) {
+    return this._evalBlock(
+      ['block', expression],
+      this.global,
+    );
+  }
+
   /**
    * Evaluate an expression in the given environment
    */
   eval(exp, env = this.global) {
+
     if (this._isNumber(exp)) {
       return exp;
     }
 
     if (this._isString(exp)) {
       return exp.slice(1, -1);
+    }
+
+    // -------------------------------------------------
+    // Block:
+    if (exp[0] === "begin") {
+      const blockEnv = new Environment({}, env);
+      return this._evalBlock(exp, blockEnv);
     }
 
     // -------------------------------------------------
@@ -39,21 +57,25 @@ class Eva {
     // Variable update: (set foo 10)
 
     if (exp[0] === "set") {
-      const [_, name, value] = exp;
-      return env.assign(name, this.eval(value, env));
+      const [_, ref, value] = exp;
+
+      // assign to a property
+      if (ref[0] === 'prop') {
+        const [_tag, instance, propName] = ref;
+        const instanceEnv = this.eval(instance, env);
+
+        return instanceEnv.define(
+          propName,
+          this.eval(value, env)
+        );
+      }
+      return env.assign(ref, this.eval(value, env));
     }
 
     // -------------------------------------------------
     // Variable access: foo
     if (this._isVariableName(exp)) {
       return env.lookup(exp);
-    }
-
-    // -------------------------------------------------
-    // Block:
-    if (exp[0] === "begin") {
-      const blockEnv = new Environment({}, env);
-      return this._evalBlock(exp, blockEnv);
     }
 
     // -------------------------------------------------
@@ -116,6 +138,76 @@ class Eva {
     }
 
     // -------------------------------------------------
+    // class declaration:
+    if (exp[0] === 'class') {
+      const [_tag, name, parent, body] = exp;
+      
+      const parentEnv = this.eval(parent, env) || env;
+      const classEnv = new Environment({}, parentEnv);
+
+      this._evalBody(body, classEnv);
+      
+      return env.define(name, classEnv);
+    }
+
+    // class instanciation:
+    if (exp[0] === 'new') {
+      const classEnv = this.eval(exp[1], env);
+      const instanceEnv = new Environment({}, classEnv);
+
+      const args = exp.slice(2).map(arg => this.eval(arg, env));
+
+      this._callUserDefinedFunction(
+        classEnv.lookup('constructor'),
+        [instanceEnv, ...args]
+      )
+
+      return instanceEnv;
+    }
+    
+    // property access
+    if (exp[0] === 'prop') {
+      const [_tag, instance, name] = exp;
+
+      const instanceEnv = this.eval(instance, env);
+
+      return instanceEnv.lookup(name);
+    }
+
+    // super
+    if (exp[0] === 'super') {
+      const [_tag, className] = exp;
+      return this.eval(className, env);
+    }
+
+    // module
+    if (exp[0] === 'module') {
+      const [_tag, name, body] = exp;
+
+      const moduleEnv = new Environment({}, env);
+
+      this._evalBody(body, moduleEnv);
+
+      return env.define(name, moduleEnv);
+    }
+
+    // import 
+    if (exp[0] === 'import') {
+      const [_tag, name] = exp;
+
+      const moduleSrc = fs.readFileSync(
+        `${__dirname}/modules/${name}.eva`,
+        'utf-8'
+      );
+
+      const body = evaParser.parse(`(begin ${moduleSrc})`);
+
+      const moduleExp = ['module', name, body];
+
+      return this.eval(moduleExp, this.global);
+    }
+
+    // -------------------------------------------------
     // Function calls:
     if (Array.isArray(exp)) {
       const fn = this.eval(exp[0], env);
@@ -127,21 +219,25 @@ class Eva {
       }
 
       // User-defined functions:
-      const activationRecord = {};
-
-      fn.params.forEach((param, index) => {
-        activationRecord[param] = args[index];
-      });
-
-      const activationEnv = new Environment(
-        activationRecord,
-        fn.env // static scope
-      );
-
-      return this._evalBody(fn.body, activationEnv);
+      return this._callUserDefinedFunction(fn, args);
     }
 
     throw `Unimplemented: ${JSON.stringify(exp)}`;
+  }
+
+  _callUserDefinedFunction(fn, args) {
+    const activationRecord = {};
+
+    fn.params.forEach((param, index) => {
+      activationRecord[param] = args[index];
+    });
+
+    const activationEnv = new Environment(
+      activationRecord,
+      fn.env // static scope
+    );
+
+    return this._evalBody(fn.body, activationEnv);
   }
 
   _evalBody(body, env) {
@@ -172,7 +268,7 @@ class Eva {
   }
 
   _isVariableName(exp) {
-    return typeof exp === "string" && /^[+\-*/<>=a-zA-Z0-9_]*$/.test(exp);
+    return typeof exp === 'string' && /^[+\-*/<>=a-zA-Z0-9_]+$/.test(exp);
   }
 }
 

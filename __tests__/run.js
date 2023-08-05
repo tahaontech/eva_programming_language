@@ -13,10 +13,18 @@ const tests = [
     require('./lambda-function-test.js'),
     require('./switch-test.js'),
     require('./increment-test.js'),
+    require('./class-test.js'),
+    require('./module-test.js'),
+    require('./import-test.js'),
 ];
 
 const eva = new Eva();
-eva.eval(['print', '"Hello, World!"'])
+
+function exec(code) {
+  const exp = evaParser.parse(code);
+  return eva.eval(exp);
+}
+
 tests.forEach(test => test(eva));
 
-console.log("All assertions passed!");
+console.log('All assertions passed!');
